@@ -16,6 +16,7 @@ import Control.Exception
 import Control.Monad
 import System.IO.Extra
 import General.Str
+import System.Directory
 import System.Exit
 import qualified System.Process.ByteString as BS
 import qualified Data.ByteString.UTF8 as UTF8
@@ -78,9 +79,13 @@ packagePopularity cbl = mp `seq` (errs, mp)
 -- | Run 'ghc-pkg' and get a list of packages which are installed.
 readGhcPkg :: Settings -> IO (Map.Map PkgName Package)
 readGhcPkg settings = do
-    topdir <- findExecutable "ghc-pkg"
+    topdir  <- findExecutable "ghc-pkg"
+    homeDir <- getHomeDirectory
+    let ghcPkgArgs = [ "dump"
+                     , "--package-db=" ++ homeDir </> ".cabal/store/ghc-8.6.1/package.db"
+                     ]
     -- important to use BS process reading so it's in Binary format, see #194
-    (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ["dump"] mempty
+    (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ghcPkgArgs mempty
     when (exit /= ExitSuccess) $
         fail $ "Error when reading from ghc-pkg, " ++ show exit ++ "\n" ++ UTF8.toString stderr
     let g (stripPrefix "$topdir" -> Just x) | Just t <- topdir = takeDirectory t ++ x
