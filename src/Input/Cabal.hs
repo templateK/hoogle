@@ -82,6 +82,7 @@ readGhcPkg settings = do
     topdir  <- findExecutable "ghc-pkg"
     homeDir <- getHomeDirectory
     let ghcPkgArgs = [ "dump"
+                     , "--package-db=" ++ homeDir </> "compilers/ghc/ghc-8.6.1/lib/ghc-8.6.1/package.conf.d"
                      , "--package-db=" ++ homeDir </> ".cabal/store/ghc-8.6.1/package.db"
                      ]
     -- important to use BS process reading so it's in Binary format, see #194
