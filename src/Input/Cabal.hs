@@ -137,9 +137,11 @@ readCabal Settings{..} src = Package{..}
         -- split on things like "," "&" "and", then throw away email addresses, replace spaces with "-" and rename
         cleanup =
             filter (/= "") .
-            map (renameTag . intercalate "-" . filter ('@' `notElem`) . words . takeWhile (`notElem` "<(")) .
-            concatMap (map unwords . split (== "and") . words) . split (`elem` ",&")
+            map (renameTag . intercalate "-" . filter ('@' `notElem`) . words . takeWhile isNotOpenAngleBracketOrParen) .
+            concatMap (map unwords . split (== "and") . words) . split isCommaOrAnpersand
 
+        isNotOpenAngleBracketOrParen c = (notElem :: Char -> String -> Bool) c "<("
+        isCommaOrAnpersand           c = (elem :: Char -> String -> Bool) c ",&"
 
 -- Ignores nesting beacuse it's not interesting for any of the fields I care about
 lexCabal :: String -> [(String, [String])]
