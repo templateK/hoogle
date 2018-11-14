@@ -177,8 +177,8 @@ storeReadFile file act = mmapWithFilePtr file ReadOnly Nothing $ \(ptr, len) -> 
         verStart <- BS.unsafePackCStringLen (plusPtr ptr 0, verN)
         if verString /= verStart then
             error $ "The Hoogle file " ++ file ++ " is the wrong version or format.\n" ++
-                    "Expected: " ++ trim (BS.unpack verString) ++ "\n" ++
-                    "Got     : " ++ map (\x -> if isAlphaNum x || x `elem` "_-. " then x else '?') (trim $ BS.unpack verStart)
+            "Expected: " ++ trim (BS.unpack verString) ++ "\n" ++
+                    "Got     : " ++ map (\x -> if isAlphaNum x || x `elem` ("_-. " :: String) then x else '?') (trim $ BS.unpack verStart)
          else
             error $ "The Hoogle file " ++ file ++ " is truncated, probably due to an error during creation."
 
@@ -187,6 +187,7 @@ storeReadFile file act = mmapWithFilePtr file ReadOnly Nothing $ \(ptr, len) -> 
         error $ "The Hoogle file " ++ file ++ " is corrupt, couldn't read atom table."
     atoms <- decodeBS <$> BS.unsafePackCStringLen (plusPtr ptr $ len - verN - intSize - atomSize, atomSize)
     act $ StoreRead file len ptr atoms
+  where
 
 storeRead :: (Typeable (t a), Typeable a, Stored a) => StoreRead -> t a -> a
 storeRead = storedRead

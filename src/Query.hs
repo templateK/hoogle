@@ -58,8 +58,8 @@ isBracket x = x `elem` (openBrackets ++ shutBrackets)
 isBracketPair x = x `elem` zipWith (++) openBrackets shutBrackets
 
 isSym x = ((isSymbol x || isPunctuation x) && x `notElem` special) || x `elem` ascSymbol
-    where special = "(),;[]`{}\"'"
-          ascSymbol = "!#$%&*+./<=>?@\\^|-~"
+    where special = "(),;[]`{}\"'" :: String
+          ascSymbol = "!#$%&*+./<=>?@\\^|-~" :: String
 
 isSyms xs | isBracket xs || isBracketPair xs = False
 isSyms (x:xs) = isSym x
@@ -75,7 +75,7 @@ lexer x | Just s <- (bs !!) <$> findIndex (`isPrefixOf` x) bs = s : lexer (drop 
 lexer (x:xs)
     | isSpace x = " " : lexer (dropWhile isSpace xs)
     | isAlpha x || x == '_' =
-        let (a,b) = span (\x -> isAlphaNum x || x `elem` "_'#-") xs
+        let (a,b) = span (\x -> isAlphaNum x || x `elem` ("_'#-" :: String)) xs
             (a1,a2) = spanEnd (== '-') a
         in (x:a1) : lexer (a2 ++ b)
     | isSym x = let (a,b) = span isSym xs in (x:a) : lexer b

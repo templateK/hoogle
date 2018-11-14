@@ -121,7 +121,7 @@ generate = Generate
     {download = def &= help "Download all files from the web"
     ,insecure = def &= help "Allow insecure HTTPS connections"
     ,include = def &= args &= typ "PACKAGE"
-    ,local_ = def &= opt "" &= help "Index local packages and link to local haddock docs"
+    ,local_ = def &= opt ("" :: String) &= help "Index local packages and link to local haddock docs"
     ,count = 0 &= name "n" &= help "Maximum number of packages to index (defaults to all)"
     ,haddock = def &= help "Use local haddocks"
     ,debug = def &= help "Generate debug information"
@@ -130,7 +130,7 @@ generate = Generate
 server = Server
     {port = 8080 &= typ "INT" &= help "Port number"
     ,cdn = "" &= typ "URL" &= help "URL prefix to use"
-    ,logs = "" &= opt "log.txt" &= typFile &= help "File to log requests to (defaults to stdout)"
+    ,logs = "" &= opt ("log.txt" :: String) &= typFile &= help "File to log requests to (defaults to stdout)"
     ,local = False &= help "Allow following file:// links, restricts to 127.0.0.1  Set --host explicitely (including to '*' for any host) to override the localhost-only behaviour"
     ,haddock = def &= help "Serve local haddocks from a specified directory"
     ,scope = def &= help "Default scope to start with"
