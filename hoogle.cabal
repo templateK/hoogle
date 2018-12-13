@@ -72,7 +72,7 @@ library
         tar,
         template-haskell,
         text,
-        time >= 1.5,
+        time >= 1.9.2,
         transformers,
         uniplate,
         utf8-string,
