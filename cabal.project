@@ -1,2 +1,3 @@
 packages: .
-allow-newer: all
+-- allow-newer: all
+allow-newer: time, haskell-src-exts
