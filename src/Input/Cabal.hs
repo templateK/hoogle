@@ -77,14 +77,20 @@ packagePopularity cbl = mp `seq` (errs, mp)
 -- READERS
 
 -- | Run 'ghc-pkg' and get a list of packages which are installed.
-readGhcPkg :: Settings -> IO (Map.Map PkgName Package)
-readGhcPkg settings = do
+readGhcPkg :: Settings -> [FilePath] -> IO (Map.Map PkgName Package)
+readGhcPkg settings pkgdbs = do
     topdir  <- findExecutable "ghc-pkg"
     homeDir <- getHomeDirectory
+    let additionalPkgDbParams = ("--package-db=" ++) <$>  pkgdbs
+
+    putStrLn "*BEGIN: additional packagedb parameters"
+    mapM_ print additionalPkgDbParams
+    putStrLn "*END  : additional packagedb parameters"
+
     let ghcPkgArgs = [ "dump"
                      , "--package-db=" ++ homeDir </> "compilers/ghc/ghc-8.6.4/lib/ghc-8.6.4/package.conf.d"
                      , "--package-db=" ++ homeDir </> ".cabal/store/ghc-8.6.4/package.db"
-                     ]
+                     ] ++ additionalPkgDbParams
     -- important to use BS process reading so it's in Binary format, see #194
     (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ghcPkgArgs mempty
     when (exit /= ExitSuccess) $

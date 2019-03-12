@@ -154,9 +154,9 @@ readFregeOnline timing download = do
     return (Map.empty, Set.singleton $ strPack "frege", source)
 
 
-readHaskellGhcpkg :: Timing -> Settings -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
-readHaskellGhcpkg timing settings = do
-    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings
+readHaskellGhcpkg :: Timing -> Settings -> [FilePath] -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
+readHaskellGhcpkg timing settings pkgdbs = do
+    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings pkgdbs
     let source =
             forM_ (Map.toList cbl) $ \(name,Package{..}) -> whenJust packageDocs $ \docs -> do
                 let file = docs </> strUnpack name <.> "txt"
@@ -170,9 +170,9 @@ readHaskellGhcpkg timing settings = do
                     in Map.map (\p -> p{packageTags = ts ++ packageTags p}) cbl
     return (cbl, Map.keysSet cbl, source)
 
-readHaskellHaddock :: Timing -> Settings -> FilePath -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
-readHaskellHaddock timing settings docBaseDir = do
-    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings
+readHaskellHaddock :: Timing -> Settings -> FilePath -> [FilePath] -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
+readHaskellHaddock timing settings docBaseDir pkgdbs = do
+    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings pkgdbs
     let source =
             forM_ (Map.toList cbl) $ \(name, p@Package{..}) -> do
                 let docs = docDir (strUnpack name) p
@@ -197,9 +197,9 @@ actionGenerate g@Generate{..} = withTiming (if debug then Just $ replaceExtensio
     download <- return $ downloadInput timing insecure download (takeDirectory database)
     settings <- loadSettings
     (cbl, want, source) <- case language of
-        Haskell | Just dir <- haddock -> readHaskellHaddock timing settings dir
-                | [""] <- local_ -> readHaskellGhcpkg timing settings
-                | [] <- local_ -> readHaskellOnline timing settings download
+        Haskell | Just dir <- haddock -> readHaskellHaddock timing settings dir pkgdbs
+                | [""]     <- local_ -> readHaskellGhcpkg timing settings pkgdbs
+                | []       <- local_ -> readHaskellOnline timing settings download
                 | otherwise -> readHaskellDirs timing settings local_
         Frege | [] <- local_ -> readFregeOnline timing download
               | otherwise -> errorIO "No support for local Frege databases"

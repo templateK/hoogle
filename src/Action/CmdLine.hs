@@ -42,6 +42,7 @@ data CmdLine
         ,haddock :: Maybe FilePath
         ,debug :: Bool
         ,language :: Language
+        ,pkgdbs :: [FilePath]
         }
     | Server
         {port :: Int
@@ -125,6 +126,7 @@ generate = Generate
     ,count = 0 &= name "n" &= help "Maximum number of packages to index (defaults to all)"
     ,haddock = def &= help "Use local haddocks"
     ,debug = def &= help "Generate debug information"
+    ,pkgdbs = def &= opt ("" :: String) &= help "Additional packagedb directories for generating hoogle docs. Each pakcagedb must be comma separated."
     } &= help "Generate Hoogle databases"
 
 server = Server
