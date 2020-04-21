@@ -129,7 +129,10 @@ readHaskellDirs timing settings dirs = do
     -- We never distinguish on versions, so they are considered equal when reordering
     -- So put 2.0 first in the list and rely on stable sorting. A bit of a hack.
     let order a = second Down $ parseTrailingVersion a
-    let packages = map (strPack . takeBaseName &&& id) $ sortOn (map order . splitDirectories) $ filter ((==) ".txt" . takeExtension) files
+    let packages = map (strPack . takeBaseName &&& (\f -> replaceExtension f "txt"))
+                     $ sortOn (map order . splitDirectories)
+                     $ filter ((==) ".haddock" . takeExtension) files
+
     cabals <- mapM parseCabal $ filter ((==) ".cabal" . takeExtension) files
     let source = forM_ packages $ \(name, file) -> do
             src <- liftIO $ bstrReadFile file
