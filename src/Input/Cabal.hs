@@ -87,7 +87,7 @@ readGhcPkg settings = do
     let g (stripPrefix "$topdir" -> Just x) | Just t <- topdir = takeDirectory t ++ x
         g x = x
     let fixer p = p{packageLibrary = True, packageDocs = g <$> packageDocs p}
-    let f ((stripPrefix "name: " -> Just x):xs) = Just (strPack x, fixer $ readCabal settings $ unlines xs)
+    let f ((stripPrefix "name: " -> Just x):xs) = Just (strPack $ trim x, fixer $ readCabal settings $ unlines xs)
         f xs = Nothing
     return $ Map.fromList $ mapMaybe f $ splitOn ["---"] $ lines $ filter (/= '\r') $ UTF8.toString stdout
 
@@ -140,10 +140,15 @@ readCabal Settings{..} src = Package{..}
 lexCabal :: String -> [(String, [String])]
 lexCabal = f . lines
     where
+        isEmpty str
+          | str == [] = True
+          | otherwise = False
         f (x:xs) | (white,x) <- span isSpace x
                  , (name@(_:_),x) <- span (\c -> isAlpha c || c == '-') x
                  , ':':x <- trim x
                  , (xs1,xs2) <- span (\s -> length (takeWhile isSpace s) > length white) xs
-                 = (lower name, trim x : replace ["."] [""] (map (trim . fst . breakOn "--") xs1)) : f xs2
+                 , trx <- trim x
+                 , xs3 <- replace ["."] [""] (map (trim . fst . breakOn "--") xs1)
+                 = (lower name, if isEmpty trx then xs3 else trx:xs3) : f xs2
         f (x:xs) = f xs
         f [] = []
