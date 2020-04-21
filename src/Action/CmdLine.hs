@@ -40,6 +40,7 @@ data CmdLine
         ,include :: [String]
         ,count :: Maybe Int
         ,local_ :: [FilePath]
+        ,package_db :: [FilePath]
         ,haddock :: Maybe FilePath
         ,debug :: Bool
         ,language :: Language
@@ -126,6 +127,7 @@ generate = Generate
     ,insecure = def &= help "Allow insecure HTTPS connections"
     ,include = def &= args &= typ "PACKAGE"
     ,local_ = def &= opt "" &= help "Index local packages and link to local haddock docs"
+    ,package_db = def &= opt "" &= help "Index local packages with explicit  package db locations."
     ,count = Nothing &= name "n" &= help "Maximum number of packages to index (defaults to all)"
     ,haddock = def &= help "Use local haddocks"
     ,debug = def &= help "Generate debug information"

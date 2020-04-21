@@ -77,11 +77,12 @@ packagePopularity cbl = mp `seq` (errs, mp)
 -- READERS
 
 -- | Run 'ghc-pkg' and get a list of packages which are installed.
-readGhcPkg :: Settings -> IO (Map.Map PkgName Package)
-readGhcPkg settings = do
+readGhcPkg :: Settings -> [FilePath] -> IO (Map.Map PkgName Package)
+readGhcPkg settings dirs = do
     topdir <- findExecutable "ghc-pkg"
+    let ghcpkgArgs = ["dump"] ++ map (\dir -> "--package-db=" ++ dir) dirs
     -- important to use BS process reading so it's in Binary format, see #194
-    (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ["dump"] mempty
+    (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ghcpkgArgs mempty
     when (exit /= ExitSuccess) $
         errorIO $ "Error when reading from ghc-pkg, " ++ show exit ++ "\n" ++ UTF8.toString stderr
     let g (stripPrefix "$topdir" -> Just x) | Just t <- topdir = takeDirectory t ++ x

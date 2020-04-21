@@ -166,7 +166,7 @@ readFregeOnline timing download = do
 
 readHaskellGhcpkg :: Timing -> Settings -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
 readHaskellGhcpkg timing settings = do
-    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings
+    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings []
     let source =
             forM_ (Map.toList cbl) $ \(name,Package{..}) -> whenJust packageDocs $ \docs -> do
                 let file = docs </> strUnpack name <.> "txt"
@@ -182,7 +182,7 @@ readHaskellGhcpkg timing settings = do
 
 readHaskellHaddock :: Timing -> Settings -> FilePath -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
 readHaskellHaddock timing settings docBaseDir = do
-    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings
+    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings []
     let source =
             forM_ (Map.toList cbl) $ \(name, p@Package{..}) -> do
                 let docs = docDir (strUnpack name) p
@@ -198,19 +198,37 @@ readHaskellHaddock timing settings docBaseDir = do
 
     where docDir name Package{..} = name ++ "-" ++ strUnpack packageVersion
 
+readHaskellPkgDbs :: Timing -> Settings -> [FilePath] -> IO (Map.Map PkgName Package, Set.Set PkgName, ConduitT () (PkgName, URL, LBStr) IO ())
+readHaskellPkgDbs timing settings dirs = do
+    cbl <- timed timing "Reading ghc-pkg" $ readGhcPkg settings dirs
+    putStrLn "with following package-db paths"
+    mapM_ print dirs
+    let source =
+            forM_ (Map.toList cbl) $ \(name,Package{..}) -> whenJust packageDocs $ \docs -> do
+                let file = docs </> strUnpack name <.> "txt"
+                whenM (liftIO $ doesFileExist file) $ do
+                    src <- liftIO $ bstrReadFile file
+                    docs <- liftIO $ canonicalizePath docs
+                    let url = "file://" ++ ['/' | not $ all isPathSeparator $ take 1 docs] ++
+                              replace "\\" "/" (addTrailingPathSeparator docs)
+                    yield (name, url, lbstrFromChunks [src])
+    cbl <- return $ let ts = map (both strPack) [("set","stackage"),("set","installed")]
+                    in Map.map (\p -> p{packageTags = ts ++ packageTags p}) cbl
+    return (cbl, Map.keysSet cbl, source)
+
 actionGenerate :: CmdLine -> IO ()
 actionGenerate g@Generate{..} = withTiming (if debug then Just $ replaceExtension database "timing" else Nothing) $ \timing -> do
     putStrLn "Starting generate"
     createDirectoryIfMissing True $ takeDirectory database
     whenLoud $ putStrLn $ "Generating files to " ++ takeDirectory database
-
     download <- return $ downloadInput timing insecure download (takeDirectory database)
     settings <- loadSettings
     (cbl, want, source) <- case language of
-        Haskell | Just dir <- haddock -> readHaskellHaddock timing settings dir
-                | [""] <- local_ -> readHaskellGhcpkg timing settings
-                | [] <- local_ -> readHaskellOnline timing settings download
-                | otherwise -> readHaskellDirs timing settings local_
+        Haskell | Just dir <- haddock     -> readHaskellHaddock timing settings dir
+                | package_db /= []        -> readHaskellPkgDbs timing settings package_db
+                | [""] <- local_          -> readHaskellGhcpkg timing settings
+                | [] <- local_            -> readHaskellOnline timing settings download
+                | otherwise               -> readHaskellDirs timing settings local_
         Frege | [] <- local_ -> readFregeOnline timing download
               | otherwise -> errorIO "No support for local Frege databases"
     (cblErrs, popularity) <- evaluate $ packagePopularity cbl
