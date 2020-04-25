@@ -13,15 +13,11 @@ import Data.List.Extra
 import System.FilePath
 import Control.DeepSeq
 import Control.Exception
-import Control.Exception.Extra
 import Control.Monad
 import System.IO.Extra
 import General.Str
 import System.Exit
-import qualified System.Process.ByteString as BS
-import qualified Data.ByteString.UTF8 as UTF8
 import System.Directory
-import Data.Char
 import Data.Maybe
 import Data.Tuple.Extra
 import qualified Data.Map.Strict as Map
@@ -31,6 +27,17 @@ import Data.Semigroup
 import Control.Applicative
 import Prelude
 
+import qualified Distribution.InstalledPackageInfo as Cabal
+import qualified Distribution.Simple.Utils         as Cabal
+import qualified Distribution.Types.PackageId      as Cabal
+import qualified Distribution.Text                 as Cabal
+import qualified Distribution.Compat.Exception     as Cabal
+import qualified Distribution.Types.PackageName    as Cabal
+import qualified Distribution.Utils.ShortText      as CS
+import qualified Data.Set                          as Set
+import System.Directory.Internal.Prelude (IOErrorType (..))
+import System.IO.Error                   (ioeGetErrorType)
+import Data.List.NonEmpty                (NonEmpty((:|)))
 ---------------------------------------------------------------------
 -- DATA TYPE
 
@@ -79,19 +86,34 @@ packagePopularity cbl = mp `seq` (errs, mp)
 -- | Run 'ghc-pkg' and get a list of packages which are installed.
 readGhcPkg :: Settings -> [FilePath] -> IO (Map.Map PkgName Package)
 readGhcPkg settings dirs = do
-    topdir <- findExecutable "ghc-pkg"
-    let ghcpkgArgs = ["dump"] ++ map (\dir -> "--package-db=" ++ dir) dirs
-    -- important to use BS process reading so it's in Binary format, see #194
-    (exit, stdout, stderr) <- BS.readProcessWithExitCode "ghc-pkg" ghcpkgArgs mempty
-    when (exit /= ExitSuccess) $
-        errorIO $ "Error when reading from ghc-pkg, " ++ show exit ++ "\n" ++ UTF8.toString stderr
-    let g (stripPrefix "$topdir" -> Just x) | Just t <- topdir = takeDirectory t ++ x
-        g x = x
-    let fixer p = p{packageLibrary = True, packageDocs = g <$> packageDocs p}
-    let f ((stripPrefix "name: " -> Just x):xs) = Just (strPack $ trim x, fixer $ readCabal settings $ unlines xs)
-        f xs = Nothing
-    return $ Map.fromList $ mapMaybe f $ splitOn ["---"] $ lines $ filter (/= '\r') $ UTF8.toString stdout
+    confs <- foldM getConfs [] dirs
+    pkgInfos <- mapM (parsePackageConfFile settings) confs
+    pure $ Map.fromList pkgInfos
 
+
+getConfs :: [FilePath] -> FilePath -> IO [FilePath]
+getConfs confs pkgDbPath
+  = do e <- Cabal.tryIO $ getDirectoryContents pkgDbPath
+       case e of
+         Left err
+           | ioeGetErrorType err == InappropriateType -> do
+                  die $ "hoogle getConfs: ghc no longer supports single-file style package "
+                     ++ "databases (" ++ pkgDbPath ++ ")"
+           | otherwise -> do
+                  die $ "hoogle getConfs: " ++ show err
+         Right files -> pure $ foldr makeConfFullPath confs files
+  where
+    makeConfFullPath :: FilePath -> [FilePath] -> [FilePath]
+    makeConfFullPath file acc =
+      if ".conf" == takeExtension file then (pkgDbPath </> file):acc else acc
+
+
+parsePackageConfFile :: Settings -> FilePath -> IO (PkgName, Package)
+parsePackageConfFile settings file = do
+  utf8File <- Cabal.readUTF8File file
+  case readCabal settings utf8File of
+    Left err -> die $ "hoogle parsePackageConfFile: " ++ show err
+    Right ok -> pure ok
 
 -- | Given a tarball of Cabal files, parse the latest version of each package.
 parseCabalTarball :: Settings -> FilePath -> IO (Map.Map PkgName Package)
@@ -101,55 +123,59 @@ parseCabalTarball :: Settings -> FilePath -> IO (Map.Map PkgName Package)
 -- rely on the fact the highest version is last (using lastValues)
 parseCabalTarball settings tarfile = do
     res <- runConduit $
-        (sourceList =<< liftIO (tarballReadFiles tarfile)) .|
-        mapC (first takeBaseName) .| groupOnLastC fst .| mapMC (evaluate . force) .|
-        pipelineC 10 (mapC (strPack *** readCabal settings . lbstrUnpack) .| mapMC (evaluate . force) .| sinkList)
+        (sourceList =<< liftIO (tarballReadFiles tarfile))
+          .| mapC (first takeBaseName)
+          .| groupOnLastC fst
+          .| mapC snd
+          .| pipelineC 10 (mapC (readCabal settings . lbstrUnpack)
+          .| mapMC (evaluate . force)
+          .| foldMC accM [])
+          -- .| sinkList)
     return $ Map.fromList res
-
-
+    where
+      accM acc e = case e of
+        Left err -> putStrLn err >> pure acc
+        Right pkg -> pure (pkg:acc)
 ---------------------------------------------------------------------
 -- PARSERS
 
 -- | Cabal information, plus who I depend on
-readCabal :: Settings -> String -> Package
-readCabal Settings{..} src = Package{..}
-    where
-        mp = Map.fromListWith (++) $ lexCabal src
-        ask x = Map.findWithDefault [] x mp
+readCabal :: Settings -> String -> Either String (PkgName, Package)
+readCabal Settings{..} src =
+  case parsePackageInfo src of
+    Left err      -> Left err
+    Right pkgInfo -> Right (name, Package{..})
+      where
+          pkgId       = Cabal.sourcePackageId pkgInfo
+          name        = strPack . Cabal.unPackageName . Cabal.pkgName $ pkgId
+          authors     = lines . CS.fromShortText . Cabal.author $ pkgInfo
+          maintainers = lines . CS.fromShortText . Cabal.maintainer $ pkgInfo
+          licenses    = lines $ case Cabal.license pkgInfo of
+                                  Left  l1 -> show l1 -- SPDX expression
+                                  Right l2 -> show l2 -- OLD Licenses
+          category  = CS.fromShortText . Cabal.category $ pkgInfo
 
-        packageDepends =
-            map strPack $ nubOrd $ filter (/= "") $
-            map (intercalate "-" . takeWhile (all isAlpha . take 1) . splitOn "-" . fst . word1) $
-            concatMap (split (== ',')) (ask "build-depends") ++ concatMap words (ask "depends")
-        packageVersion = strPack $ head $ dropWhile null (ask "version") ++ ["0.0"]
-        packageSynopsis = strPack $ unwords $ words $ unwords $ ask "synopsis"
-        packageLibrary = "library" `elem` map (lower . trim) (lines src)
-        packageDocs = listToMaybe $ ask "haddock-html"
+          packageTags = [ (strPack "category", strPack category) ]
+                     ++ [ (strPack "license", strPack license) | license <- licenses ]
+                     ++ [ (strPack "author", strPack author) | author <- ordNub (authors <> maintainers) ]
 
-        packageTags = map (both strPack) $ nubOrd $ concat
-            [ map (head xs,) $ concatMap cleanup $ concatMap ask xs
-            | xs <- [["license"],["category"],["author","maintainer"]]]
-
-        -- split on things like "," "&" "and", then throw away email addresses, replace spaces with "-" and rename
-        cleanup =
-            filter (/= "") .
-            map (renameTag . intercalate "-" . filter ('@' `notElem`) . words . takeWhile (`notElem` "<(")) .
-            concatMap (map unwords . split (== "and") . words) . split (`elem` ",&")
+          packageLibrary  = Cabal.libraryDirs pkgInfo /= [] || Cabal.libraryDynDirs pkgInfo /= []
+          packageSynopsis = strPack . CS.fromShortText . Cabal.synopsis $ pkgInfo
+          packageVersion  = strPack . Cabal.display . Cabal.pkgVersion $ pkgId
+          packageDepends  = map (strPack . Cabal.display) (Cabal.depends pkgInfo)
+          packageDocs     = listToMaybe $ Cabal.haddockHTMLs pkgInfo
 
 
--- Ignores nesting beacuse it's not interesting for any of the fields I care about
-lexCabal :: String -> [(String, [String])]
-lexCabal = f . lines
-    where
-        isEmpty str
-          | str == [] = True
-          | otherwise = False
-        f (x:xs) | (white,x) <- span isSpace x
-                 , (name@(_:_),x) <- span (\c -> isAlpha c || c == '-') x
-                 , ':':x <- trim x
-                 , (xs1,xs2) <- span (\s -> length (takeWhile isSpace s) > length white) xs
-                 , trx <- trim x
-                 , xs3 <- replace ["."] [""] (map (trim . fst . breakOn "--") xs1)
-                 = (lower name, if isEmpty trx then xs3 else trx:xs3) : f xs2
-        f (x:xs) = f xs
-        f [] = []
+parsePackageInfo :: String -> Either String Cabal.InstalledPackageInfo
+parsePackageInfo src =
+  case Cabal.parseInstalledPackageInfo (Cabal.toUTF8BS src) of
+    Left (err :| _) -> Left err
+    Right (_, ok)   -> Right ok
+
+
+ordNub :: (Ord a) => [a] -> [a]
+ordNub l = go Set.empty l
+  where
+    go _ []     = []
+    go s (x:xs) = if x `Set.member` s then go s xs
+                                      else x : go (Set.insert x s) xs

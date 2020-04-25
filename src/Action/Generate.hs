@@ -6,6 +6,7 @@ import Data.List.Extra
 import System.FilePath
 import System.Directory.Extra
 import System.IO.Extra
+import System.Exit (die)
 import Data.Tuple.Extra
 import Control.Exception.Extra
 import Data.IORef
@@ -146,8 +147,10 @@ readHaskellDirs timing settings dirs = do
   where
     parseCabal fp = do
         src <- readFileUTF8' fp
-        let pkg = readCabal settings src
-        return (strPack $ takeBaseName fp, pkg)
+        case readCabal settings src of
+          Left err -> die $ "hoogle readHaskellDirs: " ++ show err
+          Right tup -> pure tup
+        -- return (strPack $ takeBaseName fp, pkg)
 
     generateBarePackage (name, file) =
         (name, mempty{packageTags = (strPack "set", strPack "all") : sets})

@@ -3,12 +3,13 @@
 module General.Conduit(
     module Data.Conduit, MonadIO, liftIO,
     sourceList, sinkList, sourceLStr,
-    mapC, mapAccumC, filterC,
+    mapC, mapAccumC, filterC, foldMC,
     mapMC, mapAccumMC,
     (|$|), pipelineC, groupOnLastC,
     zipFromC, linesCR
     ) where
 
+import Conduit (foldMC)
 import Data.Void
 import Data.Conduit
 import Data.Conduit.List as C
