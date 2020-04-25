@@ -20,7 +20,7 @@ import Control.Arrow                     (first)
 import Control.DeepSeq                   (NFData, rnf, force)
 import Control.Exception                 (evaluate)
 import Control.Monad                     (mplus, foldM)
-import Data.Maybe                        (listToMaybe)
+import Data.Maybe                        (listToMaybe, isJust)
 import Data.List.NonEmpty                (NonEmpty((:|)))
 import General.Conduit                   (runConduit, sourceList ,mapC, mapMC, groupOnLastC ,pipelineC ,foldMC, liftIO, (.|))
 import General.Str                       (Str, strNull, lbstrUnpack, strPack, strUnpack)
@@ -121,7 +121,7 @@ parseCabalTarball settings tarfile = do
           .| groupOnLastC fst
           .| mapC snd
           .| pipelineC 10 (mapC (readCabal settings . lbstrUnpack)
-          .| mapMC (evaluate . force)
+          -- .| mapMC (evaluate . force)
           .| foldMC accM [])
           -- .| sinkList)
     return $ Map.fromList res
@@ -152,7 +152,9 @@ readCabal Settings{..} src =
                      ++ [ (strPack "license", strPack license) | license <- licenses ]
                      ++ [ (strPack "author", strPack author) | author <- ordNub (authors <> maintainers) ]
 
-          packageLibrary  = Cabal.libraryDirs pkgInfo /= [] || Cabal.libraryDynDirs pkgInfo /= []
+          -- | TODO: this field is used only for determining package documentation existence.
+          --         the field name is deceiving so, it needs improvement.
+          packageLibrary  = (not $ isJust packageDocs) || Cabal.libraryDirs pkgInfo == []
           packageSynopsis = strPack . Cabal.fromShortText . Cabal.synopsis $ pkgInfo
           packageVersion  = strPack . Cabal.display . Cabal.pkgVersion $ pkgId
           packageDepends  = map (strPack . Cabal.display) (Cabal.depends pkgInfo)
