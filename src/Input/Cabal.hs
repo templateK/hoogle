@@ -7,37 +7,30 @@ module Input.Cabal(
     packagePopularity, readCabal
     ) where
 
-import Input.Settings
-
-import Data.List.Extra
-import System.FilePath
-import Control.DeepSeq
-import Control.Exception
-import Control.Monad
-import System.IO.Extra
-import General.Str
-import System.Exit
-import System.Directory
-import Data.Maybe
-import Data.Tuple.Extra
-import qualified Data.Map.Strict as Map
-import General.Util
-import General.Conduit
-import Data.Semigroup
-import Control.Applicative
-import Prelude
-
+import qualified Data.Map.Strict                   as Map
+import qualified Data.Set                          as Set
 import qualified Distribution.InstalledPackageInfo as Cabal
 import qualified Distribution.Simple.Utils         as Cabal
 import qualified Distribution.Types.PackageId      as Cabal
 import qualified Distribution.Text                 as Cabal
 import qualified Distribution.Compat.Exception     as Cabal
 import qualified Distribution.Types.PackageName    as Cabal
-import qualified Distribution.Utils.ShortText      as CS
-import qualified Data.Set                          as Set
-import System.Directory.Internal.Prelude (IOErrorType (..))
-import System.IO.Error                   (ioeGetErrorType)
+import qualified Distribution.Utils.ShortText      as Cabal
+import Control.Arrow                     (first)
+import Control.DeepSeq                   (NFData, rnf, force)
+import Control.Exception                 (evaluate)
+import Control.Monad                     (mplus, foldM)
+import Data.Maybe                        (listToMaybe)
 import Data.List.NonEmpty                (NonEmpty((:|)))
+import General.Conduit                   (runConduit, sourceList ,mapC, mapMC, groupOnLastC ,pipelineC ,foldMC, liftIO, (.|))
+import General.Str                       (Str, strNull, lbstrUnpack, strPack, strUnpack)
+import General.Util                      (PkgName, tarballReadFiles)
+import Input.Settings                    (Settings(..))
+import System.Directory                  (getDirectoryContents)
+import System.Directory.Internal.Prelude (IOErrorType(..))
+import System.Exit                       (die)
+import System.FilePath                   (takeExtension, takeBaseName, (</>))
+import System.IO.Error                   (ioeGetErrorType)
 ---------------------------------------------------------------------
 -- DATA TYPE
 
@@ -53,7 +46,7 @@ data Package = Package
 
 instance Semigroup Package where
     Package x1 x2 x3 x4 x5 x6 <> Package y1 y2 y3 y4 y5 y6 =
-        Package (x1++y1) (x2||y2) (one x3 y3) (one x4 y4) (nubOrd $ x5 ++ y5) (x6 `mplus` y6)
+        Package (x1++y1) (x2||y2) (one x3 y3) (one x4 y4) (ordNub $ x5 ++ y5) (x6 `mplus` y6)
         where one a b = if strNull a then b else a
 
 instance Monoid Package where
@@ -148,19 +141,19 @@ readCabal Settings{..} src =
       where
           pkgId       = Cabal.sourcePackageId pkgInfo
           name        = strPack . Cabal.unPackageName . Cabal.pkgName $ pkgId
-          authors     = lines . CS.fromShortText . Cabal.author $ pkgInfo
-          maintainers = lines . CS.fromShortText . Cabal.maintainer $ pkgInfo
+          authors     = lines . Cabal.fromShortText . Cabal.author $ pkgInfo
+          maintainers = lines . Cabal.fromShortText . Cabal.maintainer $ pkgInfo
           licenses    = lines $ case Cabal.license pkgInfo of
                                   Left  l1 -> show l1 -- SPDX expression
                                   Right l2 -> show l2 -- OLD Licenses
-          category  = CS.fromShortText . Cabal.category $ pkgInfo
+          category  = Cabal.fromShortText . Cabal.category $ pkgInfo
 
           packageTags = [ (strPack "category", strPack category) ]
                      ++ [ (strPack "license", strPack license) | license <- licenses ]
                      ++ [ (strPack "author", strPack author) | author <- ordNub (authors <> maintainers) ]
 
           packageLibrary  = Cabal.libraryDirs pkgInfo /= [] || Cabal.libraryDynDirs pkgInfo /= []
-          packageSynopsis = strPack . CS.fromShortText . Cabal.synopsis $ pkgInfo
+          packageSynopsis = strPack . Cabal.fromShortText . Cabal.synopsis $ pkgInfo
           packageVersion  = strPack . Cabal.display . Cabal.pkgVersion $ pkgId
           packageDepends  = map (strPack . Cabal.display) (Cabal.depends pkgInfo)
           packageDocs     = listToMaybe $ Cabal.haddockHTMLs pkgInfo
