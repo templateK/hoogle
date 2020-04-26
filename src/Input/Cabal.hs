@@ -22,7 +22,7 @@ import Control.Exception                 (evaluate)
 import Control.Monad                     (mplus, foldM)
 import Data.Maybe                        (listToMaybe, isJust)
 import Data.List.NonEmpty                (NonEmpty((:|)))
-import General.Conduit                   (runConduit, sourceList ,mapC, mapMC, groupOnLastC ,pipelineC ,foldMC, liftIO, (.|))
+import General.Conduit                   (runConduit, sourceList ,mapC, mapMC, groupOnLastC ,pipelineC ,foldMC, liftIO, (.|), filterC, filterMC)
 import General.Str                       (Str, strNull, lbstrUnpack, strPack, strUnpack)
 import General.Util                      (PkgName, tarballReadFiles)
 import Input.Settings                    (Settings(..))
@@ -31,6 +31,14 @@ import System.Directory.Internal.Prelude (IOErrorType(..))
 import System.Exit                       (die)
 import System.FilePath                   (takeExtension, takeBaseName, (</>))
 import System.IO.Error                   (ioeGetErrorType)
+
+
+import qualified Data.ByteString.Lazy as LB
+import qualified Data.Set as S
+import Data.List (isSuffixOf, group, groupBy)
+import System.FilePath (takeFileName)
+import Control.Monad (forM_)
+import Data.Traversable (forM)
 ---------------------------------------------------------------------
 -- DATA TYPE
 
@@ -72,7 +80,7 @@ packagePopularity cbl = mp `seq` (errs, mp)
         (good, bad)  = Map.partitionWithKey (\k _ -> k `Map.member` cbl) $
             Map.fromListWith (++) [(b,[a]) | (a,bs) <- Map.toList cbl, b <- packageDepends bs]
 
-
+-- | TODO: Use package.cache
 ---------------------------------------------------------------------
 -- READERS
 
@@ -108,6 +116,9 @@ parsePackageConfFile settings file = do
     Left err -> die $ "hoogle parsePackageConfFile: " ++ show err
     Right ok -> pure ok
 
+
+-- | success case:  IO ByteString    -> (BS.unpack   :: ByteString   -> [Word8]) -> decodeStringUTF8 -> (ignoreBOM :: Skipping BOM head)
+-- | now         :  IO LB.ByteString -> (LBS.unpack :: LB.ByteString -> [Word8]) -> decodeStringUTF8 -> (ignoreBOM :: Skipping BOM head)
 -- | Given a tarball of Cabal files, parse the latest version of each package.
 parseCabalTarball :: Settings -> FilePath -> IO (Map.Map PkgName Package)
 -- items are stored as:
@@ -119,8 +130,9 @@ parseCabalTarball settings tarfile = do
         (sourceList =<< liftIO (tarballReadFiles tarfile))
           .| mapC (first takeBaseName)
           .| groupOnLastC fst
+          .| filterC isBlackList
           .| mapC snd
-          .| pipelineC 10 (mapC (readCabal settings . lbstrUnpack)
+          .| pipelineC 10 (mapC (readCabal settings . Cabal.ignoreBOM . Cabal.fromUTF8LBS)
           -- .| mapMC (evaluate . force)
           .| foldMC accM [])
           -- .| sinkList)
@@ -136,7 +148,7 @@ parseCabalTarball settings tarfile = do
 readCabal :: Settings -> String -> Either String (PkgName, Package)
 readCabal Settings{..} src =
   case parsePackageInfo src of
-    Left err      -> Left err
+    Left err      -> Left $ (unlines $ take 2 $ lines src) ++ "\n" ++ show err
     Right pkgInfo -> Right (name, Package{..})
       where
           pkgId       = Cabal.sourcePackageId pkgInfo
@@ -174,3 +186,56 @@ ordNub l = go Set.empty l
     go _ []     = []
     go s (x:xs) = if x `Set.member` s then go s xs
                                       else x : go (Set.insert x s) xs
+
+
+-- | for testing
+
+fakeSettings :: Settings
+fakeSettings = Settings id (\_ _ -> 0)
+
+test f = do
+  case readCabal fakeSettings f of
+    Left err -> print err
+    Right (pkgName, pkgInfo) -> print pkgInfo
+
+test2 f = do
+  (pkgName, pkgInfo) <- parsePackageConfFile fakeSettings f
+  print pkgInfo
+
+
+test3 = do
+  tars <- tarballReadFiles "/Volumes/Ramdisk/tmp/index.tar.gz"
+  forM_ (groupByCabalFile tars) $ \tar -> do
+    case readCabal fakeSettings (Cabal.ignoreBOM . Cabal.fromUTF8LBS . snd $ tar) of
+      Left err -> die $ fst tar
+      Right r' -> putChar '.'
+
+test4 = do
+  ms <- parseCabalTarball fakeSettings "/Volumes/Ramdisk/tmp/index.tar.gz"
+  mapM_ print (Map.toList ms)
+
+{-
+    Obviously these packages isn't maintained. So just ignore them.
+    DSTM.cabal                        : `{}`brace character.                     line 12, 35
+    control-monad-exception-mtl.cabal : ` default- extensions` space character   line 26
+    ds-kanren.cabal                   : test-suite section spurious semicolon.   line 28, 40
+    metric.cabal                      : test-suite section spurious semicolon.   line 28
+    phasechange.cabal                 : impl(ghc >=.. ) spurious semicolon.      line 49, 54
+    smartword.cabal                   : `build depends` missing hipen character. line 3438
+-}
+groupByCabalFile :: [(FilePath, LB.ByteString)] -> [(FilePath, LB.ByteString)]
+groupByCabalFile xs = foldr go [] xs
+  where
+      go t acc@(a:as) = if isBlackList t || extractFilename t == extractFilename a then acc else t:acc
+      go t []         = [t]
+
+
+extractFilename = takeFileName . fst
+isBlackList e   = extractFilename e `elem` blacklist
+  where blacklist =
+         [ "DSTM.cabal"
+         , "control-monad-exception-mtl.cabal"
+         , "ds-kanren.cabal"
+         , "metric.cabal"
+         , "phasechange.cabal"
+         , "smartword.cabal" ]
