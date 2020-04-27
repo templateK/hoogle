@@ -173,6 +173,7 @@ readHaskellGhcpkg timing settings = do
     let source =
             forM_ (Map.toList cbl) $ \(name,Package{..}) -> whenJust packageDocs $ \docs -> do
                 let file = docs </> strUnpack name <.> "txt"
+                liftIO $ putStrLn $ "raedHaskellGhcpkg: " ++ file
                 whenM (liftIO $ doesFileExist file) $ do
                     src <- liftIO $ bstrReadFile file
                     docs <- liftIO $ canonicalizePath docs

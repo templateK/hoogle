@@ -21,6 +21,7 @@ import Control.DeepSeq                   (NFData, rnf, force)
 import Control.Exception                 (evaluate)
 import Control.Monad                     (mplus, foldM)
 import Data.Maybe                        (listToMaybe, isJust)
+import Data.List                         (sortBy)
 import Data.List.NonEmpty                (NonEmpty((:|)))
 import General.Conduit                   (runConduit, sourceList ,mapC, mapMC, groupOnLastC ,pipelineC ,foldMC, liftIO, (.|), filterC, filterMC)
 import General.Str                       (Str, strNull, lbstrUnpack, strPack, strUnpack)
@@ -36,9 +37,11 @@ import System.IO.Error                   (ioeGetErrorType)
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Set as S
 import Data.List (isSuffixOf, group, groupBy)
-import System.FilePath (takeFileName)
+import System.FilePath (takeFileName, (<.>), (</>))
+import System.Directory (doesFileExist)
 import Control.Monad (forM_)
 import Data.Traversable (forM)
+import Control.Monad (when)
 ---------------------------------------------------------------------
 -- DATA TYPE
 
@@ -64,7 +67,6 @@ instance Monoid Package where
 instance NFData Package where
     rnf (Package a b c d e f) = rnf (a,b,c,d,e,f)
 
-
 ---------------------------------------------------------------------
 -- POPULARITY
 
@@ -85,11 +87,25 @@ packagePopularity cbl = mp `seq` (errs, mp)
 -- READERS
 
 -- | Run 'ghc-pkg' and get a list of packages which are installed.
+-- | DONE: Get the latest versions.
+-- | NOTE: There may exists multiple latest version conf with different hash.
 readGhcPkg :: Settings -> [FilePath] -> IO (Map.Map PkgName Package)
 readGhcPkg settings dirs = do
     confs <- foldM getConfs [] dirs
     pkgInfos <- mapM (parsePackageConfFile settings) confs
-    pure $ Map.fromList pkgInfos
+    -- pure $ Map.fromList $ sortBy compareTuple $ filter (not . isBlackListed) pkgInfos
+    pure $ Map.fromList $ sortBy compareTuple pkgInfos
+    where
+      compareTuple (name1, pkg1) (name2, pkg2)
+        | name1 == name2 = packageVersion pkg1 `compare` packageVersion pkg2
+        | otherwise      = name1 `compare` name2
+      isBlackListed (name, _) = name `elem` blackListedPackageNames
+
+-- | NOTE: black list reason: No haddock documentations in the source code.
+blackListedPackageNames :: [Str]
+blackListedPackageNames = map strPack
+  [ "rts"
+  , "bytestring-builder" ]
 
 
 getConfs :: [FilePath] -> FilePath -> IO [FilePath]
@@ -130,7 +146,7 @@ parseCabalTarball settings tarfile = do
         (sourceList =<< liftIO (tarballReadFiles tarfile))
           .| mapC (first takeBaseName)
           .| groupOnLastC fst
-          .| filterC isBlackList
+          .| filterC isMalformedCabal
           .| mapC snd
           .| pipelineC 10 (mapC (readCabal settings . Cabal.ignoreBOM . Cabal.fromUTF8LBS)
           -- .| mapMC (evaluate . force)
@@ -214,6 +230,21 @@ test4 = do
   ms <- parseCabalTarball fakeSettings "/Volumes/Ramdisk/tmp/index.tar.gz"
   mapM_ print (Map.toList ms)
 
+test5 = do
+  let dirs = [ "/Users/taemu/compilers/ghc/ghc-8.10.1/lib/ghc-8.10.1/package.conf.d"
+             , "/Users/taemu/.cabal/store/ghc-8.10.1/package.db/" ]
+  ms <- readGhcPkg fakeSettings dirs
+  let files = foo <$> Map.toList ms
+  forM_ files $ \file -> do
+    b <- doesFileExist file
+    when (not b) $ putStrLn $ file ++ " doesn't exists."
+  pure ()
+  where
+       foo (name, pkg) = case packageDocs pkg of
+                        Nothing -> ""
+                        Just doc -> doc </> strUnpack name <.> "txt"
+
+
 {-
     Obviously these packages isn't maintained. So just ignore them.
     DSTM.cabal                        : `{}`brace character.                     line 12, 35
@@ -226,16 +257,17 @@ test4 = do
 groupByCabalFile :: [(FilePath, LB.ByteString)] -> [(FilePath, LB.ByteString)]
 groupByCabalFile xs = foldr go [] xs
   where
-      go t acc@(a:as) = if isBlackList t || extractFilename t == extractFilename a then acc else t:acc
+      go t acc@(a:as) = if isMalformedCabal t || extractFilename t == extractFilename a then acc else t:acc
       go t []         = [t]
 
 
 extractFilename = takeFileName . fst
-isBlackList e   = extractFilename e `elem` blacklist
-  where blacklist =
-         [ "DSTM.cabal"
-         , "control-monad-exception-mtl.cabal"
-         , "ds-kanren.cabal"
-         , "metric.cabal"
-         , "phasechange.cabal"
-         , "smartword.cabal" ]
+isMalformedCabal e   = extractFilename e `elem` malformedCabalFiles
+
+malformedCabalFiles =
+  [ "DSTM.cabal"
+  , "control-monad-exception-mtl.cabal"
+  , "ds-kanren.cabal"
+  , "metric.cabal"
+  , "phasechange.cabal"
+  , "smartword.cabal" ]
