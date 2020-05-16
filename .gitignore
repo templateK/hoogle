@@ -5,3 +5,5 @@ log.txt
 *.prof
 /.stack-work/
 /issues/
+dist-newstyle
+hie.yaml
